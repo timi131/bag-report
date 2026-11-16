@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<title>Баг-репорт REDSMS</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: рабочий трекер — шапка со счётчиками-фильтрами, слева список багов, справа карточка/форма; на телефоне одна колонка */
+:root {
+  /* палитра red.ru: чернильный #18192D, фирменный красный #F91B11, нейтральные серые */
+  --bg: #F5F5F5; --surface: #FFFFFF; --surface-2: #F0F0F0; --fg: #18192D; --muted: #6E6F78; --line: #E1E1E4;
+  --accent: #F91B11; --accent-fg: #FFFFFF;
+  --sev-blocker: #D3140C; --sev-critical: #E8630A; --sev-major: #B7860B; --sev-minor: #467CE5; --sev-trivial: #8A8B8D;
+  --st-new: #467CE5; --st-in_progress: #B7860B; --st-fixed: #2E8A55; --st-closed: #8A8B8D; --st-rejected: #D3140C;
+  --danger: #D3140C;
+  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 8px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #15161B; --surface: #18192D; --surface-2: #212226; --fg: #F5F5F5; --muted: #9A9BA3; --line: #2C2D3E;
+  --accent: #FB3B32; --accent-fg: #FFFFFF;
+  --sev-blocker: #FB6460; --sev-critical: #F7914D; --sev-major: #E5BE4E; --sev-minor: #7FA6F0; --sev-trivial: #9A9BA3;
+  --st-new: #7FA6F0; --st-in_progress: #E5BE4E; --st-fixed: #5CC08A; --st-closed: #9A9BA3; --st-rejected: #FB6460;
+  --danger: #FB6460; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #15161B; --surface: #18192D; --surface-2: #212226; --fg: #F5F5F5; --muted: #9A9BA3; --line: #2C2D3E;
+  --accent: #FB3B32; --accent-fg: #FFFFFF;
+  --sev-blocker: #FB6460; --sev-critical: #F7914D; --sev-major: #E5BE4E; --sev-minor: #7FA6F0; --sev-trivial: #9A9BA3;
+  --st-new: #7FA6F0; --st-in_progress: #E5BE4E; --st-fixed: #5CC08A; --st-closed: #9A9BA3; --st-rejected: #FB6460;
+  --danger: #FB6460; color-scheme: dark }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-sans); font-size: 14px; line-height: 1.5; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.app { display: flex; flex-direction: column; height: 100%; }
+.top { padding-block: 14px 10px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); border-bottom: 3px solid var(--accent); background: var(--surface); display: flex; flex-direction: column; gap: 12px; }
+.top-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+.brand h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.brand .sub { color: var(--muted); font-size: 13px; }
+.mark { font-family: var(--font-mono); font-size: 12px; color: var(--accent); border: 1px solid currentColor; border-radius: 4px; padding: 0 5px; align-self: center; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); padding: 7px 12px; border-radius: var(--r); cursor: pointer; font-weight: 500; white-space: nowrap; }
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger { color: var(--danger); }
+.btn.danger.solid { background: var(--danger); border-color: var(--danger); color: var(--surface); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn.ghost { border-color: transparent; background: transparent; }
+
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 3px 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.chip .n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+.chip[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--muted)); flex: none; }
+
+.layout { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(300px, 380px) 1fr; }
+.list-pane { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: var(--surface); }
+.list-tools { display: flex; gap: 8px; padding: 10px 12px; padding-left: max(12px, env(safe-area-inset-left, 0px)); border-bottom: 1px solid var(--line); }
+.list-tools input, .list-tools select { border: 1px solid var(--line); background: var(--bg); border-radius: var(--r); padding: 6px 10px; min-width: 0; }
+.list-tools input { flex: 1; }
+.list { overflow-y: auto; flex: 1; }
+.item { display: grid; grid-template-columns: 4px 1fr; gap: 0 12px; padding: 10px 14px 10px 0; border-bottom: 1px solid var(--line); cursor: pointer; width: 100%; text-align: left; background: none; border-left: 0; border-right: 0; border-top: 0; }
+.item:hover { background: var(--surface-2); }
+.item[aria-current="true"] { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.item .stripe { background: var(--c); border-radius: 0 2px 2px 0; }
+.item .t { font-weight: 500; overflow-wrap: anywhere; }
+.item .meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 12px; margin-top: 3px; }
+.id { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 1px 8px; border-radius: 999px; color: var(--c); background: color-mix(in srgb, var(--c) 13%, transparent); font-weight: 500; white-space: nowrap; }
+.list-note { padding: 24px 16px; color: var(--muted); }
+
+.main { overflow-y: auto; min-width: 0; padding-block: 20px 40px; padding-left: 28px; padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.main-inner { max-width: 860px; display: flex; flex-direction: column; gap: 20px; }
+.back { display: none; }
+h2 { margin: 0; font-size: 22px; line-height: 1.3; text-wrap: balance; overflow-wrap: anywhere; }
+h3 { margin: 0 0 6px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.head { display: flex; flex-direction: column; gap: 8px; }
+.head-meta { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.sec { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; min-width: 0; }
+.sec p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.two .sec.expected { border-top: 3px solid var(--st-fixed); }
+.two .sec.actual { border-top: 3px solid var(--sev-blocker); }
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+dl.kv dt { color: var(--muted); }
+dl.kv dd { margin: 0; overflow-wrap: anywhere; }
+ol.steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; }
+ol.steps li::marker { font-family: var(--font-mono); color: var(--muted); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.fact .v { font-weight: 500; display: flex; align-items: center; gap: 6px; }
+.foot { color: var(--muted); font-size: 12px; display: flex; gap: 16px; flex-wrap: wrap; }
+.atts { display: flex; gap: 10px; flex-wrap: wrap; }
+.att { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; width: 140px; font-size: 12px; text-decoration: none; color: inherit; background: var(--surface-2); position: relative; }
+.att img { width: 140px; height: 96px; object-fit: cover; display: block; }
+.att .nm { padding: 4px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.att .rm { position: absolute; top: 4px; right: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; cursor: pointer; font-size: 11px; padding: 0 5px; }
+.confirm { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--danger); border-radius: var(--r); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
+textarea.md { width: 100%; min-height: 160px; font-family: var(--font-mono); font-size: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); padding: 8px; }
+.status-select { border: 1px solid var(--line); background: var(--surface); border-radius: var(--r); padding: 5px 8px; }
+.export { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 12px; background: var(--surface-2); border-radius: var(--r); }
+.export-lbl { color: var(--muted); font-size: 13px; font-weight: 500; }
+.yt-group { display: inline-flex; min-width: 0; }
+.yt-in { border: 1px solid var(--line); border-right: 0; background: var(--surface); border-radius: var(--r) 0 0 var(--r); padding: 7px 10px; width: 170px; min-width: 0; text-transform: uppercase; font-family: var(--font-mono); font-size: 13px; }
+.yt-in::placeholder { text-transform: none; font-family: var(--font-sans); }
+.yt-group .btn { border-radius: 0 var(--r) var(--r) 0; text-decoration: none; }
+a.btn[aria-disabled="true"] { opacity: .6; cursor: pointer; }
+@media (max-width: 800px) { .yt-group { flex: 1 1 100%; } .yt-in { flex: 1; width: auto; } }
+
+/* form */
+form.bug { display: flex; flex-direction: column; gap: 18px; }
+fieldset { border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); padding: 14px 16px 16px; margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; min-width: 0; }
+legend { font-weight: 600; padding: 0 6px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field.wide { grid-column: 1 / -1; }
+.field label { font-weight: 500; }
+.field .req { color: var(--danger); }
+.field .hint { color: var(--muted); font-size: 12px; }
+.field input, .field select, .field textarea { border: 1px solid var(--line); background: var(--bg); border-radius: 6px; padding: 7px 10px; width: 100%; min-width: 0; }
+.field textarea { min-height: 84px; resize: vertical; }
+.field textarea.steps-in { font-family: var(--font-mono); font-size: 13px; min-height: 110px; }
+.field .err { color: var(--danger); font-size: 12px; min-height: 0; }
+.field.bad input, .field.bad textarea { border-color: var(--danger); }
+.similar { grid-column: 1 / -1; border: 1px dashed var(--sev-major); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+.similar ul { margin: 4px 0 0; padding-left: 18px; }
+.similar button { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-align: left; }
+.checklist { background: var(--surface-2); border-radius: var(--r); padding: 12px 16px; font-size: 13px; }
+.checklist ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+.form-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.guide { display: flex; flex-direction: column; gap: 16px; }
+.guide .lead { color: var(--muted); max-width: 62ch; margin: 0; }
+.tpl { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.tpl div { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; }
+.tpl b { display: block; }
+.tpl span { color: var(--muted); font-size: 13px; }
+.banner { border: 1px solid var(--line); background: var(--surface-2); border-radius: var(--r); padding: 10px 14px; color: var(--muted); }
+
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: var(--r); font-size: 13px; max-width: calc(100% - 32px); z-index: 20; }
+
+@media (max-width: 800px) {
+  .layout { grid-template-columns: 1fr; }
+  .list-pane { border-right: 0; }
+  body.show-main .list-pane { display: none; }
+  body:not(.show-main) .main { display: none; }
+  .main { padding-left: max(16px, env(safe-area-inset-left, 0px)); }
+  .back { display: inline-flex; align-self: flex-start; }
+  .two, fieldset { grid-template-columns: 1fr; }
+  .brand .sub { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <header class="top">
+    <div class="top-row">
+      <div class="brand"><span class="mark">bug</span><h1>Баг-репорт REDSMS</h1></div>
+      <button class="btn primary" id="new-btn" type="button">+ Сообщить о баге</button>
+    </div>
+    <div class="chips" id="chips" role="group" aria-label="Фильтр по статусу"></div>
+  </header>
+  <div class="layout">
+    <aside class="list-pane">
+      <div class="list-tools">
+        <input id="q" type="search" placeholder="Поиск по заголовку и описанию" aria-label="Поиск">
+        <select id="sev-filter" aria-label="Серьёзность"></select>
+      </div>
+      <div class="list" id="list"><div class="list-note">Загружаю баги…</div></div>
+    </aside>
+    <main class="main" id="main"><div class="main-inner" id="main-inner"></div></main>
+  </div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+const SEV = { blocker: 'Блокирующий', critical: 'Критический', major: 'Значительный', minor: 'Незначительный', trivial: 'Тривиальный' };
+const PRI = { high: 'Высокий', medium: 'Средний', low: 'Низкий' };
+const STATUS = { new: 'Новый', in_progress: 'В работе', fixed: 'Исправлен', closed: 'Закрыт', rejected: 'Отклонён' };
+const REPRO = { always: 'Всегда', often: 'Часто', sometimes: 'Иногда', once: 'Один раз' };
+const STAND = { test: 'Тестовый', stage: 'Стейдж', prod: 'Боевой' };
+
+let db = null, user = null, assets = null, downloads = null, uid = null, localMode = false;
+let canWrite = null;           // true / false / null (неизвестно)
+let bugs = [], loaded = false, slow = false;
+let mode = 'guide';            // guide | view | new | edit
+let selectedId = null;
+let statusFilter = 'all', sevFilter = 'all', query = '';
+let formAtt = [];
+let busy = false;
+
+const $ = s => document.querySelector(s);
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  if (attrs) for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'text') el.textContent = v;
+    else if (k === 'style') el.setAttribute('style', v);
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'value') el.value = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat()) { if (c == null || c === false) continue; el.append(c instanceof Node ? c : document.createTextNode(String(c))); }
+  return el;
+}
+const shortId = id => 'BUG-' + id.slice(-5).toUpperCase();
+const fmt = ts => ts ? new Date(ts).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+const sevPill = s => h('span', { class: 'pill', style: `--c: var(--sev-${s})` }, SEV[s] || s);
+const stPill = s => h('span', { class: 'pill', style: `--c: var(--st-${s})` }, h('span', { class: 'dot' }), STATUS[s] || s);
+const stepsOf = b => String(b.steps || '').split('\n').map(s => s.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean);
+
+let toastT;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 3200); }
+function errMsg(e) {
+  if (e?.code === 'quota_exceeded') return 'В базе закончилось место. Удалите старые баги и попробуйте снова.';
+  if (e?.code === 'invalid_argument' && canWrite !== true) return 'У вас нет прав на изменение багов в этом трекере.';
+  if (e?.code === 'resource_exhausted') return 'Слишком много действий подряд. Подождите пару секунд.';
+  return 'Не удалось сохранить. Проверьте соединение и попробуйте ещё раз.';
+}
+function goMain(on) { document.body.classList.toggle('show-main', on); }
+
+/* ---------- фильтры и счётчики ---------- */
+function visible() {
+  const q = query.trim().toLowerCase();
+  return bugs.filter(b => (statusFilter === 'all' || b.status === statusFilter)
+    && (sevFilter === 'all' || b.severity === sevFilter)
+    && (!q || [b.title, b.actual, b.expected, b.steps].join(' ').toLowerCase().includes(q)));
+}
+function renderChips() {
+  const box = $('#chips'); box.replaceChildren();
+  const mk = (key, label, n, color) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(statusFilter === key),
+    onclick: () => { statusFilter = key; renderChips(); renderList(); } },
+    color ? h('span', { class: 'dot', style: `--c: ${color}` }) : null, label, h('span', { class: 'n' }, n));
+  box.append(mk('all', 'Все', bugs.length));
+  for (const [k, v] of Object.entries(STATUS)) box.append(mk(k, v, bugs.filter(b => b.status === k).length, `var(--st-${k})`));
+}
+function renderList() {
+  const box = $('#list'); box.replaceChildren();
+  if (!db) { box.append(h('div', { class: 'list-note' }, 'База багов недоступна в этом окне. Откройте страницу на claude.ai, войдя в аккаунт.')); return; }
+  if (!loaded) { box.append(h('div', { class: 'list-note' }, slow ? 'Не удаётся связаться с базой. Список появится, как только соединение восстановится.' : 'Загружаю баги…')); return; }
+  const list = visible();
+  if (!bugs.length) { box.append(h('div', { class: 'list-note' }, 'Багов пока нет.')); return; }
+  if (!list.length) { box.append(h('div', { class: 'list-note' }, 'Под фильтр ничего не попало.')); return; }
+  for (const b of list) {
+    box.append(h('button', { class: 'item', type: 'button', 'aria-current': String(mode !== 'new' && b.id === selectedId), onclick: () => open(b.id) },
+      h('span', { class: 'stripe', style: `--c: var(--sev-${b.severity})` }),
+      h('span', null,
+        h('div', { class: 't' }, b.title || 'Без заголовка'),
+        h('div', { class: 'meta' }, h('span', { class: 'id' }, shortId(b.id)), stPill(b.status), h('span', null, SEV[b.severity] || ''), h('span', null, fmt(b.createdAt))))));
+  }
+}
+function open(id) { selectedId = id; mode = 'view'; renderList(); renderMain(); goMain(true); $('#main').scrollTop = 0; }
+
+/* ---------- правая панель ---------- */
+function renderMain() {
+  const box = $('#main-inner'); box.replaceChildren();
+  const back = h('button', { class: 'btn ghost back', type: 'button', onclick: () => { goMain(false); } }, '← К списку');
+  if (mode === 'new' || mode === 'edit') { box.append(back, renderForm()); return; }
+  const b = bugs.find(x => x.id === selectedId);
+  if (mode === 'view' && b) { box.append(back, renderDetail(b)); return; }
+  mode = 'guide'; box.append(renderGuide());
+}
+
+function renderGuide() {
+  const empty = loaded && !bugs.length;
+  return h('div', { class: 'guide' },
+    h('h2', null, empty ? 'Пока ни одного бага' : 'Выберите баг слева или заведите новый'),
+    h('p', { class: 'lead' }, 'Хороший баг-репорт можно воспроизвести, ничего не уточняя у автора. Форма проведёт по всем пунктам:'),
+    h('div', { class: 'tpl' },
+      ...[['Заголовок', 'Что сломалось и где, одной строкой'], ['Окружение', 'Версия, ОС, браузер, стенд, роль'], ['Шаги', 'По одному действию на строку'],
+        ['Ожидаемый результат', 'Что должно было произойти'], ['Фактический результат', 'Что произошло, с точным текстом ошибки'], ['Вложения', 'Скриншот, видео, логи']]
+        .map(([t, s]) => h('div', null, h('b', null, t), h('span', null, s)))),
+    localMode ? h('div', { class: 'banner' }, 'Локальный режим: баги хранятся только в этом браузере. Чтобы перенести их, выгрузите нужные в .md или PDF.') : null,
+    canWrite === false ? h('div', { class: 'banner' }, 'У вас доступ только на чтение.') :
+      h('div', null, h('button', { class: 'btn primary', type: 'button', disabled: !db || null, onclick: startNew }, '+ Сообщить о баге')));
+}
+
+function toMarkdown(b) {
+  const e = b.env || {};
+  const L = [`## ${shortId(b.id)}: ${b.title}`, '',
+    `**Статус:** ${STATUS[b.status] || ''} · **Серьёзность:** ${SEV[b.severity] || ''} · **Приоритет:** ${PRI[b.priority] || ''}`, '',
+    '### Окружение'];
+  if (e.version) L.push(`- Версия: ${e.version}`);
+  if (e.platform) L.push(`- Платформа: ${e.platform}`);
+  if (e.stand) L.push(`- Стенд: ${STAND[e.stand] || e.stand}`);
+  if (e.account) L.push(`- Аккаунт / роль: ${e.account}`);
+  L.push('', '### Шаги воспроизведения', ...stepsOf(b).map((s, i) => `${i + 1}. ${s}`),
+    '', '### Ожидаемый результат', b.expected || '', '', '### Фактический результат', b.actual || '', '');
+  if (b.repro) L.push(`**Воспроизводимость:** ${REPRO[b.repro]}`);
+  if (b.since) L.push(`**Появилось в версии:** ${b.since}`);
+  if (b.workaround) L.push(`**Обходной путь:** ${b.workaround}`);
+  return L.join('\n');
+}
+
+function renderDetail(b) {
+  const e = b.env || {};
+  const actions = h('div', { class: 'actions' });
+  const extra = h('div');
+  const fillActions = () => {
+    actions.replaceChildren(
+      canWrite !== false ? h('button', { class: 'btn', type: 'button', onclick: () => startEdit(b) }, 'Изменить') : null,
+      canWrite !== false ? h('button', { class: 'btn danger', type: 'button', onclick: askDelete }, 'Удалить') : null);
+  };
+  const askDelete = () => {
+    actions.replaceChildren(h('div', { class: 'confirm' }, `Удалить ${shortId(b.id)} безвозвратно?`,
+      h('button', { class: 'btn danger solid', type: 'button', onclick: async ev => {
+        ev.target.disabled = true;
+        try { await db.doc('bugs/' + b.id).delete(); toast(`${shortId(b.id)} удалён`); selectedId = null; mode = 'guide'; renderMain(); goMain(false); }
+        catch (err) { toast(errMsg(err)); fillActions(); }
+      } }, 'Да, удалить'),
+      h('button', { class: 'btn', type: 'button', onclick: fillActions }, 'Отмена')));
+  };
+  fillActions();
+
+  let status;
+  if (canWrite !== false) {
+    status = h('select', { class: 'status-select', id: 'status-sel', 'aria-label': 'Статус', onchange: async ev => {
+      const sel = ev.target; sel.disabled = true;
+      try { await db.doc('bugs/' + b.id).update({ status: sel.value, updatedAt: Date.now() }); toast(`Статус: ${STATUS[sel.value]}`); }
+      catch (err) { toast(errMsg(err)); sel.value = b.status; }
+      sel.disabled = false;
+    } }, ...Object.entries(STATUS).map(([k, v]) => h('option', { value: k, selected: k === b.status || null }, v)));
+  } else status = stPill(b.status);
+
+  const author = h('span', null, 'Автор: …');
+  if (b.author && user) user.profiles([b.author]).then(ps => author.textContent = 'Автор: ' + (ps[b.author]?.name || 'участник команды'));
+  else author.textContent = 'Автор: неизвестен';
+
+  const envRows = [['Версия', e.version], ['Платформа', e.platform], ['Стенд', STAND[e.stand]], ['Аккаунт / роль', e.account]].filter(r => r[1]);
+  const steps = stepsOf(b);
+  return h('article', { class: 'main-inner' },
+    h('div', { class: 'head' },
+      h('div', { class: 'head-meta' }, h('span', { class: 'id' }, shortId(b.id)), status, sevPill(b.severity)),
+      h('h2', null, b.title),
+      actions, exportBar(b, extra), extra),
+    h('div', { class: 'facts sec' },
+      h('div', { class: 'fact' }, h('h3', null, 'Серьёзность'), h('div', { class: 'v' }, h('span', { class: 'dot', style: `--c: var(--sev-${b.severity})` }), SEV[b.severity] || '—')),
+      h('div', { class: 'fact' }, h('h3', null, 'Приоритет'), h('div', { class: 'v' }, PRI[b.priority] || '—')),
+      h('div', { class: 'fact' }, h('h3', null, 'Воспроизводимость'), h('div', { class: 'v' }, REPRO[b.repro] || '—')),
+      b.since ? h('div', { class: 'fact' }, h('h3', null, 'Появилось в'), h('div', { class: 'v' }, b.since)) : null),
+    envRows.length ? h('section', { class: 'sec' }, h('h3', null, 'Окружение'),
+      h('dl', { class: 'kv' }, ...envRows.flatMap(([k, v]) => [h('dt', null, k), h('dd', null, v)]))) : null,
+    h('section', { class: 'sec' }, h('h3', null, 'Шаги воспроизведения'),
+      steps.length ? h('ol', { class: 'steps' }, ...steps.map(s => h('li', null, s))) : h('p', null, '—')),
+    h('div', { class: 'two' },
+      h('section', { class: 'sec expected' }, h('h3', null, 'Ожидаемый результат'), h('p', null, b.expected || '—')),
+      h('section', { class: 'sec actual' }, h('h3', null, 'Фактический результат'), h('p', null, b.actual || '—'))),
+    b.workaround ? h('section', { class: 'sec' }, h('h3', null, 'Обходной путь'), h('p', null, b.workaround)) : null,
+    (b.attachments || []).length ? h('section', { class: 'sec' }, h('h3', null, 'Вложения'), attList(b.attachments, false)) : null,
+    h('div', { class: 'foot' }, author, h('span', null, 'Создан: ' + fmt(b.createdAt)), b.updatedAt && b.updatedAt !== b.createdAt ? h('span', null, 'Изменён: ' + fmt(b.updatedAt)) : null));
+}
+
+function attList(list, removable) {
+  return h('div', { class: 'atts' }, ...list.map((a, i) => {
+    const url = a.url || '/_blob/' + a.id;
+    const isImg = String(a.type || '').startsWith('image/');
+    return h('a', { class: 'att', href: url, target: '_blank', rel: 'noopener' },
+      isImg ? h('img', { src: url, alt: a.name || 'вложение' }) : null,
+      h('span', { class: 'nm' }, a.name || 'файл'),
+      removable ? h('button', { class: 'rm', type: 'button', 'aria-label': 'Убрать вложение', onclick: ev => { ev.preventDefault(); formAtt.splice(i, 1); refreshAtt(); } }, '×') : null);
+  }));
+}
+
+async function copyMd(b, extra) {
+  const md = toMarkdown(b);
+  try { await navigator.clipboard.writeText(md); toast('Скопировано в буфер обмена'); }
+  catch { const ta = h('textarea', { class: 'md', readonly: true, 'aria-label': 'Текст баг-репорта' }); ta.value = md; extra.replaceChildren(ta); ta.focus(); ta.select(); toast('Выделил текст — скопируйте его вручную'); }
+}
+
+/* ---------- выгрузка: PDF, .md, Яндекс Трекер ---------- */
+function exportBar(b, extra) {
+  const row = h('div', { class: 'export' }, h('span', { class: 'export-lbl' }, 'Выгрузить:'));
+  if (downloads) row.append(
+    h('button', { class: 'btn', type: 'button', onclick: ev => downloadPdf(b, ev.currentTarget) }, 'PDF'),
+    h('button', { class: 'btn', type: 'button', onclick: () => saveFile(shortId(b.id) + '.md', toMarkdown(b)) }, 'Markdown (.md)'));
+  row.append(h('button', { class: 'btn', type: 'button', onclick: () => copyMd(b, extra) }, 'Копировать текст'));
+
+  let q = ''; try { q = localStorage.getItem('ytQueue') || ''; } catch {}
+  const qIn = h('input', { type: 'text', id: 'yt-queue', class: 'yt-in', placeholder: 'Очередь, напр. SUPPORT', 'aria-label': 'Ключ очереди Яндекс Трекера', value: q, spellcheck: 'false' });
+  const link = h('a', { class: 'btn', target: '_blank', rel: 'noopener' }, 'В Яндекс Трекер ↗');
+  const upd = () => {
+    const v = qIn.value.trim().toUpperCase();
+    try { localStorage.setItem('ytQueue', v); } catch {}
+    if (v) { link.href = trackerUrl(b, v); link.setAttribute('aria-disabled', 'false'); }
+    else { link.removeAttribute('href'); link.setAttribute('aria-disabled', 'true'); }
+  };
+  qIn.addEventListener('input', upd); upd();
+  link.addEventListener('click', e => {
+    if (!qIn.value.trim()) { e.preventDefault(); qIn.focus(); toast('Укажите ключ очереди в Яндекс Трекере'); }
+    else toast('В Трекере откроется форма задачи — проверьте поля и нажмите «Создать»');
+  });
+  row.append(h('span', { class: 'yt-group' }, qIn, link));
+  return row;
+}
+
+function trackerUrl(b, queue) {
+  const u = new URL('https://tracker.yandex.ru/createTicket');
+  u.searchParams.set('queue', queue);
+  u.searchParams.set('summary', b.title || '');
+  let d = toMarkdown(b).split('\n').slice(2).join('\n');
+  if (d.length > 5000) d = d.slice(0, 5000) + '\n\n…текст обрезан, полная версия — в файле .md';
+  u.searchParams.set('description', d);
+  return u.toString();
+}
+
+async function saveFile(name, data) {
+  try { await downloads.save({ filename: name, data }); toast(`${name} сохранён`); }
+  catch (e) {
+    if (e?.code === 'declined') return;
+    toast(e?.code === 'rate_limited' ? 'Окно сохранения уже открыто' : 'Не удалось сохранить файл');
+  }
+}
+
+function loadScript(src) {
+  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('load ' + src)); document.head.append(s); });
+}
+let pdfLibs = null;
+function libs() {
+  return pdfLibs ||= Promise.all([
+    loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'),
+    loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'),
+  ]).catch(e => { pdfLibs = null; throw e; });
+}
+
+const SEVHEX = { blocker: '#D3140C', critical: '#E8630A', major: '#B7860B', minor: '#467CE5', trivial: '#8A8B8D' };
+function pdfSheet(b) {
+  const e = b.env || {}, ink = '#18192D', mut = '#6E6F78', line = '#E1E1E4', red = '#F91B11';
+  const sec = (t, ...kids) => h('div', { style: 'margin-top:18px' },
+    h('div', { style: `font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:${mut};margin-bottom:6px` }, t), ...kids);
+  const p = t => h('div', { style: 'white-space:pre-wrap;word-break:break-word' }, t || '—');
+  const envRows = [['Версия', e.version], ['Платформа', e.platform], ['Стенд', STAND[e.stand]], ['Аккаунт / роль', e.account]].filter(r => r[1]);
+  const att = b.attachments || [];
+  const imgs = att.filter(a => String(a.type || '').startsWith('image/'));
+  const others = att.filter(a => !String(a.type || '').startsWith('image/'));
+  return h('div', { style: `position:absolute;left:-10000px;top:0;width:794px;padding:48px 56px;background:#ffffff;color:${ink};font-family:Geist, system-ui, sans-serif;font-size:13px;line-height:1.5;box-sizing:border-box` },
+    h('div', { style: `border-bottom:3px solid ${red};padding-bottom:10px;display:flex;justify-content:space-between;align-items:baseline` },
+      h('b', { style: 'font-size:15px' }, 'Баг-репорт REDSMS'), h('span', { style: `font-family:'Geist Mono', monospace;color:${mut}` }, shortId(b.id))),
+    h('div', { style: 'font-size:22px;font-weight:600;margin-top:16px;line-height:1.3;word-break:break-word' }, b.title),
+    h('div', { style: 'margin-top:10px;display:flex;gap:18px;flex-wrap:wrap' },
+      ...[['Статус', STATUS[b.status]], ['Серьёзность', SEV[b.severity]], ['Приоритет', PRI[b.priority]], ['Воспроизводимость', REPRO[b.repro]]].map(([k, v], i) =>
+        h('div', null, h('div', { style: `font-size:11px;color:${mut}` }, k),
+          h('div', { style: `font-weight:600;${i === 1 ? 'color:' + (SEVHEX[b.severity] || ink) : ''}` }, v || '—')))),
+    envRows.length ? sec('Окружение', h('table', { style: 'border-collapse:collapse' },
+      ...envRows.map(([k, v]) => h('tr', null, h('td', { style: `color:${mut};padding:2px 18px 2px 0;vertical-align:top` }, k), h('td', { style: 'padding:2px 0' }, v))))) : null,
+    sec('Шаги воспроизведения', h('ol', { style: 'margin:0;padding-left:20px' }, ...stepsOf(b).map(s => h('li', { style: 'margin:2px 0' }, s)))),
+    sec('Ожидаемый результат', p(b.expected)),
+    sec('Фактический результат', p(b.actual)),
+    b.since ? sec('Появилось в версии', p(b.since)) : null,
+    b.workaround ? sec('Обходной путь', p(b.workaround)) : null,
+    att.length ? sec('Вложения',
+      others.length ? p(others.map(a => a.name || 'файл').join('\n')) : null,
+      ...imgs.map(a => h('img', { src: a.url || '/_blob/' + a.id, style: `display:block;max-width:100%;margin-top:8px;border:1px solid ${line}` }))) : null,
+    h('div', { style: `margin-top:28px;padding-top:8px;border-top:1px solid ${line};color:${mut};font-size:11px` },
+      `Создан: ${fmt(b.createdAt)}${b.updatedAt && b.updatedAt !== b.createdAt ? ' · Изменён: ' + fmt(b.updatedAt) : ''} · Выгружен: ${fmt(Date.now())}`));
+}
+
+async function downloadPdf(b, btn) {
+  btn.disabled = true; const label = btn.textContent; btn.textContent = 'Готовлю PDF…';
+  let sheet;
+  try {
+    await libs();
+    try { await document.fonts.ready; } catch {}
+    sheet = pdfSheet(b); document.body.append(sheet);
+    await Promise.all([...sheet.querySelectorAll('img')].map(img => img.complete ? 0 : new Promise(r => { img.onload = img.onerror = r; })));
+    const canvas = await window.html2canvas(sheet, { scale: 2, backgroundColor: '#ffffff', logging: false });
+    const pdf = new window.jspdf.jsPDF({ unit: 'pt', format: 'a4' });
+    const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+    const pagePx = Math.floor(canvas.width * ph / pw);
+    for (let y = 0, i = 0; y < canvas.height; y += pagePx, i++) {
+      const c = document.createElement('canvas'); c.width = canvas.width; c.height = Math.min(pagePx, canvas.height - y);
+      const ctx = c.getContext('2d'); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height); ctx.drawImage(canvas, 0, -y);
+      if (i) pdf.addPage();
+      pdf.addImage(c.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, pw, c.height * pw / canvas.width);
+    }
+    await saveFile(shortId(b.id) + '.pdf', pdf.output('blob'));
+  } catch (e) {
+    toast('Не удалось собрать PDF. Попробуйте ещё раз.');
+  } finally {
+    sheet?.remove(); btn.disabled = false; btn.textContent = label;
+  }
+}
+
+/* ---------- форма ---------- */
+function startNew() { mode = 'new'; formAtt = []; renderList(); renderMain(); goMain(true); $('#main').scrollTop = 0; $('#f-title')?.focus(); }
+function startEdit(b) { mode = 'edit'; selectedId = b.id; formAtt = (b.attachments || []).map(a => ({ ...a })); renderMain(); $('#main').scrollTop = 0; }
+
+function field(id, label, input, o = {}) {
+  input.id = id;
+  return h('div', { class: 'field' + (o.wide ? ' wide' : '') },
+    h('label', { for: id }, label, o.req ? h('span', { class: 'req' }, ' *') : null),
+    o.hint ? h('span', { class: 'hint' }, o.hint) : null, input, h('span', { class: 'err', id: id + '-err' }));
+}
+const sel = (map, v) => h('select', null, ...Object.entries(map).map(([k, t]) => h('option', { value: k, selected: k === v || null }, t)));
+
+function renderForm() {
+  const b = mode === 'edit' ? (bugs.find(x => x.id === selectedId) || {}) : {};
+  const e = b.env || {};
+  const title = h('input', { type: 'text', value: b.title || '', placeholder: 'Кнопка «Оплатить» не реагирует в корзине в Safari', maxlength: '200' });
+  const similar = h('div', { class: 'similar', hidden: true });
+  if (mode === 'new') title.addEventListener('input', () => showSimilar(title.value, similar));
+
+  const fileIn = h('input', { type: 'file', multiple: true, accept: 'image/*,video/*,application/pdf,.txt,.log,.json', id: 'f-files' });
+  fileIn.addEventListener('change', () => upload(fileIn));
+
+  const form = h('form', { class: 'bug', novalidate: true, onsubmit: save },
+    h('div', { class: 'head' }, h('h2', null, mode === 'edit' ? `Правка ${shortId(b.id)}` : 'Новый баг-репорт')),
+    h('fieldset', null, h('legend', null, 'Суть'),
+      field('f-title', 'Заголовок', title, { req: true, wide: true, hint: 'Что сломалось и где — одной строкой' }),
+      similar,
+      field('f-sev', 'Серьёзность', sel(SEV, b.severity || 'major'), { hint: 'Насколько мешает работе' }),
+      field('f-pri', 'Приоритет', sel(PRI, b.priority || 'medium'), { hint: 'Насколько срочно чинить' })),
+    h('fieldset', null, h('legend', null, 'Окружение'),
+      field('f-ver', 'Версия / сборка', h('input', { type: 'text', value: e.version || '', placeholder: '2.14.0 (build 512)' })),
+      field('f-plat', 'ОС, браузер, устройство', h('input', { type: 'text', value: e.platform || '', placeholder: 'macOS 15, Safari 18' })),
+      field('f-stand', 'Стенд', sel(STAND, e.stand || 'test')),
+      field('f-acc', 'Аккаунт / роль', h('input', { type: 'text', value: e.account || '', placeholder: 'Тестовый покупатель' }))),
+    h('fieldset', null, h('legend', null, 'Воспроизведение'),
+      field('f-steps', 'Шаги воспроизведения', h('textarea', { class: 'steps-in', placeholder: 'Войти под тестовым пользователем\nДобавить товар в корзину\nНажать «Оплатить»' }, b.steps || ''),
+        { req: true, wide: true, hint: 'Одно действие на строку, с самого начала. Нумеровать не нужно.' }),
+      field('f-exp', 'Ожидаемый результат', h('textarea', { placeholder: 'Открывается страница оплаты' }, b.expected || ''), { req: true }),
+      field('f-act', 'Фактический результат', h('textarea', { placeholder: 'Ничего не происходит, в консоли TypeError: …' }, b.actual || ''), { req: true }),
+      field('f-repro', 'Воспроизводимость', sel(REPRO, b.repro || 'always')),
+      field('f-since', 'Появилось в версии', h('input', { type: 'text', value: b.since || '', placeholder: 'Если известно' })),
+      field('f-work', 'Обходной путь', h('input', { type: 'text', value: b.workaround || '', placeholder: 'Если есть' }), { wide: true })),
+    assets ? h('fieldset', null, h('legend', null, 'Вложения'),
+      h('div', { class: 'field wide' }, h('label', { for: 'f-files' }, 'Скриншоты, видео, логи'), h('span', { class: 'hint' }, 'До 20 МБ на файл'), fileIn, h('div', { id: 'att-box' }, attList(formAtt, true)))) : null,
+    mode === 'new' ? h('div', { class: 'checklist' }, h('b', null, 'Перед отправкой'),
+      h('ul', null, h('li', null, 'Воспроизведите баг ещё раз по своим же шагам.'), h('li', null, 'Убедитесь, что такого бага ещё нет — похожие подсветятся под заголовком.'), h('li', null, 'Один баг — один репорт.'))) : null,
+    h('div', { class: 'form-actions' },
+      h('button', { class: 'btn primary', type: 'submit', id: 'save-btn' }, mode === 'edit' ? 'Сохранить изменения' : 'Отправить баг-репорт'),
+      h('button', { class: 'btn', type: 'button', onclick: () => { mode = selectedId && bugs.some(x => x.id === selectedId) ? 'view' : 'guide'; renderList(); renderMain(); if (mode === 'guide') goMain(false); } }, 'Отмена')));
+  return form;
+}
+function refreshAtt() { const box = $('#att-box'); if (box) box.replaceChildren(attList(formAtt, true)); }
+
+function showSimilar(text, box) {
+  const words = text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 4);
+  if (!words.length) { box.hidden = true; return; }
+  const hits = bugs.map(b => ({ b, n: words.filter(w => (b.title || '').toLowerCase().includes(w)).length }))
+    .filter(x => x.n > 0).sort((a, c) => c.n - a.n).slice(0, 3);
+  if (!hits.length) { box.hidden = true; return; }
+  box.replaceChildren(h('b', null, 'Похожие баги — возможно, это дубликат:'),
+    h('ul', null, ...hits.map(({ b }) => h('li', null, h('button', { type: 'button', onclick: () => open(b.id) }, `${shortId(b.id)} · ${b.title}`), ' ', stPill(b.status)))));
+  box.hidden = false;
+}
+
+async function upload(input) {
+  const files = [...input.files]; input.value = '';
+  for (const f of files) {
+    toast(`Загружаю ${f.name}…`);
+    try { const r = await assets.upload(f); formAtt.push({ id: r.id, url: r.url, name: f.name, type: r.contentType || f.type }); refreshAtt(); toast(`${f.name} прикреплён`); }
+    catch (e) { toast(`${f.name}: не удалось загрузить. Подойдут картинки, видео, PDF и текстовые файлы до 20 МБ.`); }
+  }
+}
+
+async function save(ev) {
+  ev.preventDefault();
+  if (busy) return;
+  const v = id => ($('#' + id)?.value || '').trim();
+  let ok = true;
+  for (const [id, msg] of [['f-title', 'Напишите, что сломалось и где'], ['f-steps', 'Добавьте хотя бы один шаг'], ['f-exp', 'Опишите, что должно было произойти'], ['f-act', 'Опишите, что произошло на самом деле']]) {
+    const bad = !v(id);
+    $('#' + id).closest('.field').classList.toggle('bad', bad);
+    $('#' + id + '-err').textContent = bad ? msg : '';
+    if (bad && ok) { $('#' + id).focus(); ok = false; }
+  }
+  if (!ok) return;
+  const now = Date.now();
+  const data = {
+    title: v('f-title'), severity: v('f-sev'), priority: v('f-pri'),
+    env: { version: v('f-ver'), platform: v('f-plat'), stand: v('f-stand'), account: v('f-acc') },
+    steps: stepsOf({ steps: $('#f-steps').value }).join('\n'), expected: v('f-exp'), actual: v('f-act'),
+    repro: v('f-repro'), since: v('f-since'), workaround: v('f-work'),
+    attachments: formAtt.map(a => ({ id: a.id, name: a.name, type: a.type, ...(String(a.url || '').startsWith('data:') ? { url: a.url } : {}) })), updatedAt: now,
+  };
+  busy = true; const btn = $('#save-btn'); btn.disabled = true; btn.textContent = 'Сохраняю…';
+  try {
+    if (mode === 'new') {
+      const ref = db.collection('bugs').doc();
+      await ref.set({ ...data, status: 'new', createdAt: now, author: uid });
+      selectedId = ref.id; toast(`${shortId(ref.id)} заведён`);
+    } else {
+      await db.doc('bugs/' + selectedId).update(data); toast('Изменения сохранены');
+    }
+    mode = 'view'; renderList(); renderMain();
+  } catch (e) {
+    if (e?.code === 'invalid_argument' && canWrite === null) { canWrite = false; applyWrite(); }
+    toast(errMsg(e)); btn.disabled = false; btn.textContent = mode === 'edit' ? 'Сохранить изменения' : 'Отправить баг-репорт';
+  }
+  busy = false;
+}
+
+function applyWrite() { $('#new-btn').hidden = canWrite === false || !db; }
+
+/* ---------- запуск ---------- */
+$('#new-btn').addEventListener('click', startNew);
+$('#q').addEventListener('input', e => { query = e.target.value; renderList(); });
+const sf = $('#sev-filter');
+sf.append(h('option', { value: 'all' }, 'Любая серьёзность'), ...Object.entries(SEV).map(([k, t]) => h('option', { value: k }, t)));
+sf.addEventListener('change', () => { sevFilter = sf.value; renderList(); });
+renderChips(); renderMain();
+
+/* Локальный режим: страница открыта не на claude.ai (файлом или со своего сервера).
+   Баги хранятся в localStorage этого браузера, вложения — внутри бага, файлы скачиваются напрямую. */
+function localBackend() {
+  const KEY = 'redsms-bugs';
+  let mem = {};
+  const read = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch { return mem; } };
+  const subs = new Set();
+  const emit = () => { const all = read(); for (const s of subs) s(all); };
+  const write = all => {
+    mem = all;
+    try { localStorage.setItem(KEY, JSON.stringify(all)); }
+    catch (e) { throw { code: 'quota_exceeded', message: String(e) }; }
+    emit();
+  };
+  window.addEventListener('storage', e => { if (e.key === KEY) emit(); });
+  const clone = d => JSON.parse(JSON.stringify(d));
+  const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
+  const ref = id => ({
+    id, path: 'bugs/' + id,
+    set: async d => { const all = read(); all[id] = clone(d); write(all); },
+    update: async d => { const all = read(); if (!all[id]) throw { code: 'invalid_argument' }; all[id] = { ...all[id], ...clone(d) }; write(all); },
+    delete: async () => { const all = read(); delete all[id]; write(all); },
+  });
+  const coll = {
+    doc: id => ref(id || newId()),
+    orderBy: (f, dir) => ({ onSnapshot(next) {
+      const fn = all => {
+        const k = dir === 'desc' ? -1 : 1;
+        const docs = Object.entries(all).map(([id, d]) => ({ id, data: () => d })).sort((a, b) => k * ((a.data()[f] || 0) - (b.data()[f] || 0)));
+        next({ docs, metadata: { fromCache: false } });
+      };
+      subs.add(fn); setTimeout(() => fn(read())); return () => subs.delete(fn);
+    } }),
+  };
+  return {
+    db: { collection: () => coll, doc: p => ref(p.split('/')[1]) },
+    assets: { upload: f => new Promise((res, rej) => {
+      if (f.size > 2 * 1024 * 1024) return rej({ code: 'too_large' });
+      const r = new FileReader();
+      r.onload = () => res({ id: newId(), url: r.result, contentType: f.type });
+      r.onerror = () => rej({ code: 'unavailable' });
+      r.readAsDataURL(f);
+    }) },
+    downloads: { save: async ({ filename, data }) => {
+      const blob = data instanceof Blob ? data : new Blob([data], { type: filename.endsWith('.md') ? 'text/markdown;charset=utf-8' : 'application/octet-stream' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      return { status: 'saved' };
+    } },
+  };
+}
+
+(async () => {
+  if (window.claude?.use) {
+    [db, user, assets, downloads] = await Promise.all([claude.use('db'), claude.use('user'), claude.use('assets'), claude.use('downloads')]);
+  } else {
+    ({ db, assets, downloads } = localBackend()); localMode = true; canWrite = true;
+  }
+  if (user) { uid = await user.id(); canWrite = await user.can('data.write'); }
+  applyWrite();
+  if (!db) { renderList(); renderMain(); return; }
+  renderList();
+  let timer = setTimeout(() => { slow = true; renderList(); }, 10000);
+  db.collection('bugs').orderBy('createdAt', 'desc').onSnapshot(snap => {
+    if (!snap.metadata.fromCache) { clearTimeout(timer); slow = false; }
+    loaded = true;
+    bugs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderChips(); renderList();
+    if (mode === 'view' || mode === 'guide') renderMain();
+  }, err => {
+    clearTimeout(timer); loaded = true;
+    $('#list').replaceChildren(h('div', { class: 'list-note' }, 'Связь с базой потеряна. Обновите страницу, чтобы подключиться снова.'));
+  });
+})();
+</script>
+
+</body>
+</html>
