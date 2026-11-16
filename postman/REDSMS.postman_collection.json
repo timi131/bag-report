@@ -1,0 +1,234 @@
+{
+  "info": {
+    "name": "REDSMS Баг-репорт",
+    "description": "API трекера «Баг-репорт REDSMS» и автосоздание баг-репортов при падении тестов.\n\n1. Во вкладке Variables задайте `redsms_url` — адрес трекера, без слеша в конце. Если на сайте стоит пароль, задайте `redsms_user` и `redsms_password`.\n2. Чтобы падения тестов в вашей коллекции становились багами, скопируйте переменную `redsms_lib` (и `redsms_url`) в свою коллекцию или окружение и пишите тесты так:\n\n```js\neval(pm.variables.get('redsms_lib'));\nredsms.check('Статус 200', () => pm.response.to.have.status(200));\nredsms.report();\n```",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "basic",
+    "basic": [
+      {
+        "key": "username",
+        "value": "{{redsms_user}}",
+        "type": "string"
+      },
+      {
+        "key": "password",
+        "value": "{{redsms_password}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "redsms_url",
+      "value": "http://localhost:8501"
+    },
+    {
+      "key": "redsms_user",
+      "value": ""
+    },
+    {
+      "key": "redsms_password",
+      "value": ""
+    },
+    {
+      "key": "redsms_stand",
+      "value": "test"
+    },
+    {
+      "key": "redsms_version",
+      "value": ""
+    },
+    {
+      "key": "bug_id",
+      "value": ""
+    },
+    {
+      "key": "redsms_lib",
+      "value": "// Автобаг REDSMS для Postman и Newman.\n// Хранится в переменной redsms_lib; подключается в тестах запроса строкой\n//   eval(pm.variables.get('redsms_lib'));\n// Проверки пишутся через redsms.check(...) вместо pm.test(...), в конце — redsms.report().\n// Если хоть одна проверка упала, в трекер уходит баг-репорт. Повторный прогон того же\n// падения не плодит дубликаты, пока баг открыт (статус «Новый» или «В работе»).\nvar redsms = (function () {\n  var failures = [];\n\n  function check(name, fn) {\n    pm.test(name, function () {\n      try { fn(); }\n      catch (e) { failures.push({ name: name, error: String((e && e.message) || e) }); throw e; }\n    });\n  }\n\n  function b64(s) {\n    if (typeof btoa === 'function') return btoa(unescape(encodeURIComponent(s)));\n    return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(s));\n  }\n\n  function report(opts) {\n    opts = opts || {};\n    if (!failures.length) return;\n    var base = String(pm.variables.get('redsms_url') || '').replace(/\\/+$/, '');\n    if (!base) { console.warn('REDSMS: не задана переменная redsms_url — баг не отправлен'); return; }\n\n    var res = pm.response;\n    var body = '';\n    try { body = res.text(); } catch (e) { body = ''; }\n    if (body.length > 1500) body = body.slice(0, 1500) + '\\n…';\n    var envName = pm.environment && pm.environment.name ? ', окружение «' + pm.environment.name + '»' : '';\n\n    var bug = {\n      title: ('[Postman] ' + pm.info.requestName + ': ' + failures.map(function (f) { return f.name; }).join('; ')).slice(0, 200),\n      severity: opts.severity || (res.code >= 500 ? 'critical' : 'major'),\n      priority: opts.priority || 'medium',\n      env: {\n        version: pm.variables.get('redsms_version') || '',\n        platform: 'Postman' + envName,\n        stand: pm.variables.get('redsms_stand') || 'test',\n        account: opts.account || ''\n      },\n      steps: [\n        'Открыть в Postman запрос «' + pm.info.requestName + '»',\n        'Отправить ' + pm.request.method + ' ' + pm.request.url.toString(),\n        'Проверить ответ'\n      ],\n      expected: failures.map(function (f) { return '• ' + f.name; }).join('\\n'),\n      actual: 'HTTP ' + res.code + ' ' + res.status + ', ' + res.responseTime + ' мс\\n\\n' +\n        failures.map(function (f) { return f.name + ': ' + f.error; }).join('\\n') +\n        (body ? '\\n\\nОтвет сервера:\\n' + body : ''),\n      repro: 'always',\n      source: 'postman',\n      dedupe: true\n    };\n\n    var header = [{ key: 'Content-Type', value: 'application/json' }];\n    var user = pm.variables.get('redsms_user') || '';\n    var password = pm.variables.get('redsms_password') || '';\n    if (password) header.push({ key: 'Authorization', value: 'Basic ' + b64(user + ':' + password) });\n\n    pm.sendRequest({\n      url: base + '/api/bugs',\n      method: 'POST',\n      header: header,\n      body: { mode: 'raw', raw: JSON.stringify(bug) }\n    }, function (err, r) {\n      if (err) { console.error('REDSMS: баг не отправлен — ' + err); return; }\n      if (r.code >= 300) { console.error('REDSMS: сервер ответил ' + r.code + ' — ' + r.text()); return; }\n      var saved = r.json();\n      var short = 'BUG-' + saved.id.slice(-5).toUpperCase();\n      console.log(saved.duplicate ? 'REDSMS: такой баг уже открыт — ' + short : 'REDSMS: заведён ' + short);\n    });\n  }\n\n  return { check: check, report: report, failures: failures };\n})();\n"
+    }
+  ],
+  "item": [
+    {
+      "name": "API трекера",
+      "item": [
+        {
+          "name": "Проверка сервера",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{redsms_url}}/api/health",
+            "description": "Сервер REDSMS отвечает `{\"app\": \"redsms\"}`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Сервер REDSMS на связи', () => pm.expect(pm.response.json().app).to.eql('redsms'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Список багов",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{redsms_url}}/api/bugs",
+            "description": "Все баги. Первый id сохраняется в переменную `bug_id`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const bugs = pm.response.json().bugs;",
+                  "pm.test('Ответ 200', () => pm.response.to.have.status(200));",
+                  "if (bugs.length) pm.collectionVariables.set('bug_id', bugs[0].id);",
+                  "console.log('Багов: ' + bugs.length);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Завести баг",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{redsms_url}}/api/bugs",
+            "description": "Нужен только `title`. Шаги можно передать массивом. Сервер сам выдаст id, статус «Новый» и даты. Допустимые значения: severity — blocker, critical, major, minor, trivial; priority — high, medium, low; repro — always, often, sometimes, once; env.stand — test, stage, prod. С `\"dedupe\": true` сервер вернёт уже открытый баг с тем же заголовком вместо нового.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Кнопка «Оплатить» не реагирует в корзине\",\n  \"severity\": \"critical\",\n  \"priority\": \"high\",\n  \"env\": {\n    \"version\": \"2.14.0\",\n    \"platform\": \"macOS 15, Safari 18\",\n    \"stand\": \"test\",\n    \"account\": \"Тестовый покупатель\"\n  },\n  \"steps\": [\n    \"Войти под тестовым пользователем\",\n    \"Добавить товар в корзину\",\n    \"Нажать «Оплатить»\"\n  ],\n  \"expected\": \"Открывается страница оплаты\",\n  \"actual\": \"Ничего не происходит, в консоли TypeError\",\n  \"repro\": \"always\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Баг заведён', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+                  "const bug = pm.response.json();",
+                  "pm.collectionVariables.set('bug_id', bug.id);",
+                  "console.log('Заведён BUG-' + bug.id.slice(-5).toUpperCase());"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Получить баг",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{redsms_url}}/api/bugs/{{bug_id}}",
+            "description": "Один баг по `bug_id`."
+          }
+        },
+        {
+          "name": "Сменить статус",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{redsms_url}}/api/bugs/{{bug_id}}",
+            "description": "Дописывает поля в баг. Статусы: new, in_progress, fixed, closed, rejected. Дата изменения ставится сама.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"in_progress\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Загрузить вложение",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "image/png"
+              },
+              {
+                "key": "X-Filename",
+                "value": "screenshot.png"
+              }
+            ],
+            "url": "{{redsms_url}}/api/files",
+            "description": "Во вкладке Body выберите файл (binary) и впишите его имя в заголовок X-Filename. Ответ `{id, url}` добавьте в поле `attachments` бага: `[{\"id\": \"…\", \"name\": \"…\", \"type\": \"image/png\", \"url\": \"files/…\"}]`.",
+            "body": {
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
+            }
+          }
+        },
+        {
+          "name": "Удалить баг",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": "{{redsms_url}}/api/bugs/{{bug_id}}",
+            "description": "Удаляет баг `bug_id` безвозвратно."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Автобаг при падении теста",
+      "item": [
+        {
+          "name": "Пример: падающий тест",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{redsms_url}}/api/health",
+            "description": "Тест специально ждёт неверный статус. Отправьте запрос — в трекере появится баг «[Postman] Пример: падающий тест…». Повторная отправка не создаст дубликат, пока баг открыт."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "eval(pm.variables.get('redsms_lib'));",
+                  "",
+                  "redsms.check('Статус ответа 201', () => pm.response.to.have.status(201)); // специально неверно",
+                  "redsms.check('В ответе есть поле app', () => pm.expect(pm.response.json()).to.have.property('app'));",
+                  "",
+                  "redsms.report();"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

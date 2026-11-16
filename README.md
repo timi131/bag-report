@@ -50,6 +50,69 @@ docker run -p 8501:8501 -v bag-report-data:/data bag-report
 | `APP_PASSWORD` | Пароль на весь сайт. Без него сайт открыт всем, у кого есть адрес | не задан |
 | `APP_USER` | Логин к паролю (необязательно) | не задан |
 
+## Postman
+
+Коллекция: [`postman/REDSMS.postman_collection.json`](postman/REDSMS.postman_collection.json). В Postman: **Import** → выберите файл.
+
+1. Откройте коллекцию → вкладка **Variables** → задайте `redsms_url` (адрес трекера без слеша в конце, например `https://bugs.example.ru`).
+2. Если на сайте стоит пароль, задайте `redsms_user` и `redsms_password`.
+
+### Запросы
+
+| Запрос | Что делает |
+|---|---|
+| `GET /api/health` | Проверка, что сервер на связи |
+| `GET /api/bugs` | Все баги |
+| `POST /api/bugs` | Завести баг. Нужен только `title`, остальное заполнится само |
+| `GET /api/bugs/{id}` | Один баг |
+| `PATCH /api/bugs/{id}` | Изменить поля, например `{"status": "fixed"}` |
+| `DELETE /api/bugs/{id}` | Удалить баг |
+| `POST /api/files` | Загрузить вложение (тело — файл, имя — в заголовке `X-Filename`) |
+
+Пример тела для `POST /api/bugs`:
+
+```json
+{
+  "title": "Кнопка «Оплатить» не реагирует в корзине",
+  "severity": "critical",
+  "priority": "high",
+  "env": { "version": "2.14.0", "platform": "macOS 15, Safari 18", "stand": "test" },
+  "steps": ["Войти под тестовым пользователем", "Добавить товар в корзину", "Нажать «Оплатить»"],
+  "expected": "Открывается страница оплаты",
+  "actual": "Ничего не происходит"
+}
+```
+
+Значения полей: `severity` — `blocker`, `critical`, `major`, `minor`, `trivial`; `priority` — `high`, `medium`, `low`; `status` — `new`, `in_progress`, `fixed`, `closed`, `rejected`; `repro` — `always`, `often`, `sometimes`, `once`; `env.stand` — `test`, `stage`, `prod`.
+
+### Автобаг при падении теста
+
+Если проверка в Postman или Newman упала, в трекер уходит баг-репорт. В нём будут имя запроса, метод и URL, ожидаемое и фактическое поведение и ответ сервера. Серьёзность — «Критический» для ответов 5xx, иначе «Значительный». Пока такой баг открыт («Новый» или «В работе»), повторные падения не создают дубликатов.
+
+Чтобы включить автобаг в своей коллекции:
+
+1. Скопируйте переменные `redsms_lib` и `redsms_url` (и `redsms_user`, `redsms_password`, если есть пароль) из коллекции REDSMS в свою коллекцию или окружение. Необязательно: `redsms_stand` (`test`, `stage`, `prod`) и `redsms_version`.
+2. Во вкладке **Scripts → Post-response** запроса пишите проверки через `redsms.check` вместо `pm.test`, а в конце вызовите `redsms.report()`:
+
+   ```js
+   eval(pm.variables.get('redsms_lib'));
+
+   redsms.check('Статус 200', () => pm.response.to.have.status(200));
+   redsms.check('Есть id заказа', () => pm.expect(pm.response.json()).to.have.property('orderId'));
+
+   redsms.report();
+   ```
+
+Попробовать можно на запросе «Пример: падающий тест» из папки «Автобаг при падении теста».
+
+В CI то же самое работает через Newman:
+
+```bash
+newman run my-collection.json -e staging.postman_environment.json
+```
+
+Исходник скрипта — [`postman/redsms-lib.js`](postman/redsms-lib.js). После правки пересоберите коллекцию: `python postman/build_collection.py`.
+
 ## Где хранятся данные
 
 | Как открыт | Хранилище |

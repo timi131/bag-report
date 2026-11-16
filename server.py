@@ -17,6 +17,9 @@ API (пути работают и с префиксом, например /prefi
     GET    /api/health          проверка, что это сервер REDSMS
     GET    /api/version         номер версии данных (меняется при каждой записи)
     GET    /api/bugs            все баги: {"version": n, "bugs": [{"id", "data"}]}
+    POST   /api/bugs            завести баг: нужен только title, остальное заполнится само;
+                                с "dedupe": true вернёт уже открытый баг с тем же заголовком
+    GET    /api/bugs/<id>       один баг
     PUT    /api/bugs/<id>       создать или заменить баг (тело — JSON-объект)
     PATCH  /api/bugs/<id>       дописать поля в существующий баг
     DELETE /api/bugs/<id>       удалить баг
@@ -55,6 +58,67 @@ INLINE_TYPES = {
     "application/pdf", "text/plain", "application/json",
 }
 WRITE_LOCK = threading.Lock()
+
+SEVERITIES = {"blocker", "critical", "major", "minor", "trivial"}
+PRIORITIES = {"high", "medium", "low"}
+STATUSES = {"new", "in_progress", "fixed", "closed", "rejected"}
+OPEN_STATUSES = {"new", "in_progress"}
+REPROS = {"always", "often", "sometimes", "once"}
+STANDS = {"test", "stage", "prod"}
+ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+
+def now_ms():
+    return int(time.time() * 1000)
+
+
+def new_bug_id():
+    return "".join(secrets.choice(ID_ALPHABET) for _ in range(16))
+
+
+def pick(value, allowed, default):
+    return value if value in allowed else default
+
+
+def text(value, limit=20000):
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        value = "\n".join(str(v) for v in value)
+    return str(value).strip()[:limit]
+
+
+def normalize_new_bug(data):
+    """Баг из внешнего источника (Postman, CI): дополняет поля до формата, который понимает страница."""
+    title = text(data.get("title"), 200)
+    if not title:
+        raise HttpError(400, "Нужен заголовок бага (поле title)")
+    env = data.get("env") if isinstance(data.get("env"), dict) else {}
+    bug = {k: v for k, v in data.items() if k not in ("id", "dedupe")}
+    ts = now_ms()
+    bug.update(
+        title=title,
+        steps=text(data.get("steps")),
+        expected=text(data.get("expected")),
+        actual=text(data.get("actual")),
+        workaround=text(data.get("workaround"), 2000),
+        since=text(data.get("since"), 200),
+        severity=pick(data.get("severity"), SEVERITIES, "major"),
+        priority=pick(data.get("priority"), PRIORITIES, "medium"),
+        repro=pick(data.get("repro"), REPROS, "always"),
+        status=pick(data.get("status"), STATUSES, "new"),
+        env={
+            "version": text(env.get("version"), 200),
+            "platform": text(env.get("platform"), 200),
+            "stand": pick(env.get("stand"), STANDS, "test"),
+            "account": text(env.get("account"), 200),
+        },
+        attachments=data.get("attachments") if isinstance(data.get("attachments"), list) else [],
+        createdAt=ts,
+        updatedAt=ts,
+    )
+    bug.setdefault("author", None)
+    return bug
 
 
 class HttpError(Exception):
@@ -205,6 +269,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"version": data_version(con),
                                             "bugs": [{"id": i, "data": json.loads(d)} for i, d in rows]})
 
+        if r == "/api/bugs" and method == "POST":
+            return self.handle_create()
+
         m = re.fullmatch(r"/api/bugs/([^/]+)", r)
         if m:
             bug_id = m.group(1)
@@ -221,8 +288,30 @@ class Handler(BaseHTTPRequestHandler):
 
         raise HttpError(404, "Не найдено")
 
+    def handle_create(self):
+        data = self.read_object()
+        bug = normalize_new_bug(data)
+        with WRITE_LOCK, conn() as con:
+            if data.get("dedupe"):
+                for bid, raw in con.execute("SELECT id, data FROM bugs").fetchall():
+                    old = json.loads(raw)
+                    if old.get("title") == bug["title"] and old.get("status") in OPEN_STATUSES:
+                        return self.send_json(200, {"id": bid, "duplicate": True, **old})
+            bug_id = new_bug_id()
+            con.execute("INSERT INTO bugs (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                        (bug_id, json.dumps(bug, ensure_ascii=False), time.time(), time.time()))
+            bump_version(con)
+        return self.send_json(201, {"id": bug_id, "duplicate": False, **bug})
+
     def handle_bug(self, method, bug_id):
         now = time.time()
+        if method == "GET":
+            with conn() as con:
+                row = con.execute("SELECT data FROM bugs WHERE id = ?", (bug_id,)).fetchone()
+            if not row:
+                raise HttpError(404, "Баг не найден")
+            return self.send_json(200, {"id": bug_id, **json.loads(row[0])})
+
         if method == "PUT":
             data = self.read_object()
             with WRITE_LOCK, conn() as con:
@@ -239,6 +328,7 @@ class Handler(BaseHTTPRequestHandler):
                 row = con.execute("SELECT data FROM bugs WHERE id = ?", (bug_id,)).fetchone()
                 if not row:
                     raise HttpError(404, "Баг не найден")
+                patch.setdefault("updatedAt", now_ms())
                 merged = {**json.loads(row[0]), **patch}
                 con.execute("UPDATE bugs SET data = ?, updated_at = ? WHERE id = ?",
                             (json.dumps(merged, ensure_ascii=False), now, bug_id))
