@@ -22,19 +22,8 @@
   --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --r: 8px;
+  color-scheme: light; /* всегда светлая тема, даже если в системе включена тёмная */
 }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #15161B; --surface: #18192D; --surface-2: #212226; --fg: #F5F5F5; --muted: #9A9BA3; --line: #2C2D3E;
-  --accent: #FB3B32; --accent-fg: #FFFFFF;
-  --sev-blocker: #FB6460; --sev-critical: #F7914D; --sev-major: #E5BE4E; --sev-minor: #7FA6F0; --sev-trivial: #9A9BA3;
-  --st-new: #7FA6F0; --st-in_progress: #E5BE4E; --st-fixed: #5CC08A; --st-closed: #9A9BA3; --st-rejected: #FB6460;
-  --danger: #FB6460; color-scheme: dark } }
-:root[data-theme="dark"] {
-  --bg: #15161B; --surface: #18192D; --surface-2: #212226; --fg: #F5F5F5; --muted: #9A9BA3; --line: #2C2D3E;
-  --accent: #FB3B32; --accent-fg: #FFFFFF;
-  --sev-blocker: #FB6460; --sev-critical: #F7914D; --sev-major: #E5BE4E; --sev-minor: #7FA6F0; --sev-trivial: #9A9BA3;
-  --st-new: #7FA6F0; --st-in_progress: #E5BE4E; --st-fixed: #5CC08A; --st-closed: #9A9BA3; --st-rejected: #FB6460;
-  --danger: #FB6460; color-scheme: dark }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
