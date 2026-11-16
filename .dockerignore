@@ -1,2 +1,4 @@
 .git
 .claude
+data
+__pycache__

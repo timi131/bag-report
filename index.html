@@ -180,7 +180,8 @@ const STATUS = { new: 'Новый', in_progress: 'В работе', fixed: 'Ис
 const REPRO = { always: 'Всегда', often: 'Часто', sometimes: 'Иногда', once: 'Один раз' };
 const STAND = { test: 'Тестовый', stage: 'Стейдж', prod: 'Боевой' };
 
-let db = null, user = null, assets = null, downloads = null, uid = null, localMode = false;
+let db = null, user = null, assets = null, downloads = null, uid = null;
+let backend = 'none';          // claude | server | local
 let canWrite = null;           // true / false / null (неизвестно)
 let bugs = [], loaded = false, slow = false;
 let mode = 'guide';            // guide | view | new | edit
@@ -271,7 +272,7 @@ function renderGuide() {
       ...[['Заголовок', 'Что сломалось и где, одной строкой'], ['Окружение', 'Версия, ОС, браузер, стенд, роль'], ['Шаги', 'По одному действию на строку'],
         ['Ожидаемый результат', 'Что должно было произойти'], ['Фактический результат', 'Что произошло, с точным текстом ошибки'], ['Вложения', 'Скриншот, видео, логи']]
         .map(([t, s]) => h('div', null, h('b', null, t), h('span', null, s)))),
-    localMode ? h('div', { class: 'banner' }, 'Локальный режим: баги хранятся только в этом браузере. Чтобы перенести их, выгрузите нужные в .md или PDF.') : null,
+    backend === 'local' ? h('div', { class: 'banner' }, 'Локальный режим: баги хранятся только в этом браузере. Чтобы перенести их, выгрузите нужные в .md или PDF.') : null,
     canWrite === false ? h('div', { class: 'banner' }, 'У вас доступ только на чтение.') :
       h('div', null, h('button', { class: 'btn primary', type: 'button', disabled: !db || null, onclick: startNew }, '+ Сообщить о баге')));
 }
@@ -572,7 +573,7 @@ async function save(ev) {
     env: { version: v('f-ver'), platform: v('f-plat'), stand: v('f-stand'), account: v('f-acc') },
     steps: stepsOf({ steps: $('#f-steps').value }).join('\n'), expected: v('f-exp'), actual: v('f-act'),
     repro: v('f-repro'), since: v('f-since'), workaround: v('f-work'),
-    attachments: formAtt.map(a => ({ id: a.id, name: a.name, type: a.type, ...(String(a.url || '').startsWith('data:') ? { url: a.url } : {}) })), updatedAt: now,
+    attachments: formAtt.map(a => ({ id: a.id, name: a.name, type: a.type, ...(backend !== 'claude' && a.url ? { url: a.url } : {}) })), updatedAt: now,
   };
   busy = true; const btn = $('#save-btn'); btn.disabled = true; btn.textContent = 'Сохраняю…';
   try {
@@ -644,20 +645,91 @@ function localBackend() {
       r.onerror = () => rej({ code: 'unavailable' });
       r.readAsDataURL(f);
     }) },
-    downloads: { save: async ({ filename, data }) => {
-      const blob = data instanceof Blob ? data : new Blob([data], { type: filename.endsWith('.md') ? 'text/markdown;charset=utf-8' : 'application/octet-stream' });
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
-      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-      return { status: 'saved' };
+    downloads: directDownloads,
+  };
+}
+
+/* Скачивание файлов напрямую — вне claude.ai */
+const directDownloads = { save: async ({ filename, data }) => {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: filename.endsWith('.md') ? 'text/markdown;charset=utf-8' : 'application/octet-stream' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  return { status: 'saved' };
+} };
+
+/* Серверный режим: страницу отдаёт server.py. Баги — в его базе SQLite, общей для всех.
+   Изменения других людей подтягиваются раз в 4 секунды. Пути относительные, чтобы работать за префиксом. */
+async function hasServer() {
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 3000);
+    const r = await fetch('api/health', { signal: ctl.signal, cache: 'no-store' }); clearTimeout(t);
+    return r.ok && (await r.json()).app === 'redsms';
+  } catch { return false; }
+}
+function serverBackend() {
+  let cache = {}, version = -1, timer = null;
+  const subs = new Set();
+  const codeOf = s => s === 400 || s === 404 ? 'invalid_argument' : s === 413 ? 'too_large' : s === 507 ? 'quota_exceeded' : 'unavailable';
+  const api = async (method, path, body, headers) => {
+    const opt = { method, cache: 'no-store', headers: { ...(headers || {}) } };
+    if (body !== undefined) {
+      if (body instanceof Blob) opt.body = body;
+      else { opt.body = JSON.stringify(body); opt.headers['Content-Type'] = 'application/json'; }
+    }
+    let r;
+    try { r = await fetch(path, opt); } catch { throw { code: 'unavailable' }; }
+    if (!r.ok) throw { code: codeOf(r.status) };
+    return r.status === 204 ? null : r.json();
+  };
+  const emit = () => { for (const s of subs) s(cache); };
+  const refresh = async force => {
+    if (!force) { const v = await api('GET', 'api/version'); if (v.version === version) return; }
+    const r = await api('GET', 'api/bugs');
+    cache = Object.fromEntries(r.bugs.map(b => [b.id, b.data])); version = r.version; emit();
+  };
+  const startPolling = () => {
+    if (timer) return;
+    refresh(true).catch(() => {});
+    timer = setInterval(() => { if (!document.hidden) refresh(version < 0).catch(() => {}); }, 4000);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(version < 0).catch(() => {}); });
+  };
+  const newId = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), b => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
+  const ref = id => ({
+    id, path: 'bugs/' + id,
+    set: async d => { await api('PUT', 'api/bugs/' + id, d); cache = { ...cache, [id]: JSON.parse(JSON.stringify(d)) }; emit(); },
+    update: async d => { const merged = await api('PATCH', 'api/bugs/' + id, d); cache = { ...cache, [id]: merged }; emit(); },
+    delete: async () => { await api('DELETE', 'api/bugs/' + id); const c = { ...cache }; delete c[id]; cache = c; emit(); },
+  });
+  const coll = {
+    doc: id => ref(id || newId()),
+    orderBy: (f, dir) => ({ onSnapshot(next) {
+      const fn = all => {
+        const k = dir === 'desc' ? -1 : 1;
+        const docs = Object.entries(all).map(([id, d]) => ({ id, data: () => d })).sort((a, b) => k * ((a.data()[f] || 0) - (b.data()[f] || 0)));
+        next({ docs, metadata: { fromCache: false } });
+      };
+      subs.add(fn); if (version >= 0) setTimeout(() => fn(cache)); startPolling();
+      return () => subs.delete(fn);
+    } }),
+  };
+  return {
+    db: { collection: () => coll, doc: p => ref(p.split('/')[1]) },
+    assets: { upload: async f => {
+      if (f.size > 20 * 1024 * 1024) throw { code: 'too_large' };
+      return api('POST', 'api/files', f, { 'X-Filename': encodeURIComponent(f.name), 'Content-Type': f.type || 'application/octet-stream' });
     } },
+    downloads: directDownloads,
   };
 }
 
 (async () => {
   if (window.claude?.use) {
+    backend = 'claude';
     [db, user, assets, downloads] = await Promise.all([claude.use('db'), claude.use('user'), claude.use('assets'), claude.use('downloads')]);
+  } else if (await hasServer()) {
+    backend = 'server'; ({ db, assets, downloads } = serverBackend()); canWrite = true;
   } else {
-    ({ db, assets, downloads } = localBackend()); localMode = true; canWrite = true;
+    backend = 'local'; ({ db, assets, downloads } = localBackend()); canWrite = true;
   }
   if (user) { uid = await user.id(); canWrite = await user.can('data.write'); }
   applyWrite();
